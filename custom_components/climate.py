@@ -54,6 +54,7 @@ DEFAULT_TOLERANCE = 0.3
 DEFAULT_NAME = "Generic Thermostat"
 
 CONF_HEATER = "heater"
+CONF_AC_SWITCH = "ac_switch"
 CONF_SENSOR = "target_sensor"
 CONF_MIN_TEMP = "min_temp"
 CONF_MAX_TEMP = "max_temp"
@@ -73,6 +74,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_HEATER): cv.entity_id,
         vol.Required(CONF_SENSOR): cv.entity_id,
         vol.Optional(CONF_AC_MODE): cv.boolean,
+        vol.Optional(CONF_AC_SWITCH): cv.entity_id,
         vol.Optional(CONF_MAX_TEMP): vol.Coerce(float),
         vol.Optional(CONF_MIN_DUR): cv.positive_time_period,
         vol.Optional(CONF_MIN_TEMP): vol.Coerce(float),
@@ -100,6 +102,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
     name = config.get(CONF_NAME)
     heater_entity_id = config.get(CONF_HEATER)
+    ac_switch_entity_id = config.get(CONF_AC_SWITCH)
     sensor_entity_id = config.get(CONF_SENSOR)
     min_temp = config.get(CONF_MIN_TEMP)
     max_temp = config.get(CONF_MAX_TEMP)
@@ -120,6 +123,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
             GenericThermostat(
                 name,
                 heater_entity_id,
+                ac_switch_entity_id,
                 sensor_entity_id,
                 min_temp,
                 max_temp,
@@ -146,6 +150,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
         self,
         name,
         heater_entity_id,
+        ac_switch_entity_id,
         sensor_entity_id,
         min_temp,
         max_temp,
@@ -164,6 +169,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
         """Initialize the thermostat."""
         self._name = name
         self.heater_entity_id = heater_entity_id
+        self.ac_switch_entity_id = ac_switch_entity_id
         self.sensor_entity_id = sensor_entity_id
         self.ac_mode = ac_mode
         self.min_cycle_duration = min_cycle_duration
@@ -174,7 +180,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
         self._saved_target_temp = target_temp or away_temp
         self._temp_precision = precision
         if self.ac_mode:
-            self._hvac_list = [HVAC_MODE_COOL, HVAC_MODE_OFF]
+            self._hvac_list = [HVAC_MODE_COOL, HVAC_MODE_HEAT, HVAC_MODE_OFF]
         else:
             self._hvac_list = [HVAC_MODE_HEAT, HVAC_MODE_OFF]
         self._active = False
@@ -199,6 +205,11 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
         await super().async_added_to_hass()
 
         # Add listener
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self.ac_switch_entity_id], self._async_switch_changed
+            )
+        )
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass, [self.sensor_entity_id], self._async_sensor_changed
@@ -329,7 +340,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
             return CURRENT_HVAC_OFF
         if not self._is_device_active:
             return CURRENT_HVAC_IDLE
-        if self.ac_mode:
+        if self._hvac_mode == HVAC_MODE_COOL:
             return CURRENT_HVAC_COOL
         return CURRENT_HVAC_HEAT
 
@@ -355,6 +366,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
             self._hvac_mode = HVAC_MODE_OFF
             if self._is_device_active:
                 await self._async_heater_turn_off()
+                await self._asyn_ac_switch_turn_off()
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -403,6 +415,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
             _LOGGER.warning(
                 "The climate mode is OFF, but the switch device is ON. Turning off device %s",
                 self.heater_entity_id,
+                self.ac_switch_entity_id,     
             )
             await self._async_heater_turn_off()
 
