@@ -366,7 +366,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
             self._hvac_mode = HVAC_MODE_OFF
             if self._is_device_active:
                 await self._async_heater_turn_off()
-                await self._asyn_ac_switch_turn_off()
+                await self._async_ac_switch_turn_off()
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -418,6 +418,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
                 self.ac_switch_entity_id,     
             )
             await self._async_heater_turn_off()
+            await self._async_ac_switch_turn_off()
 
     @callback
     def _async_switch_changed(self, event):
@@ -472,6 +473,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
                     long_enough = condition.state(
                         self.hass,
                         self.heater_entity_id,
+                        self.ac_switch_entity_id,
                         current_state,
                         self.min_cycle_duration,
                     )
@@ -484,20 +486,33 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
             too_cold = self._target_temp >= self._cur_temp + self._cold_tolerance
             too_hot = self._cur_temp >= self._target_temp + self._hot_tolerance
             if self._is_device_active:
-                if (self.ac_mode and too_cold) or (not self.ac_mode and too_hot):
+                if (self._hvac_mode == HVAC_MODE_HEAT and too_hot):
                     _LOGGER.info("Turning off heater %s", self.heater_entity_id)
                     await self._async_heater_turn_off()
-                elif time is not None:
+                elif (self._hvac_mode == HVAC_MODE_COOL and too_cold):
+                    _LOGGER.info("Turning off AC switch %s", self.ac_switch_entity_id)
+                    await self._async_ac_switch_turn_off()
+                elif (time is not None and self._hvac_mode == HVAC_MODE_HEAT):
                     # The time argument is passed only in keep-alive case
                     _LOGGER.info(
                         "Keep-alive - Turning on heater heater %s",
                         self.heater_entity_id,
                     )
                     await self._async_heater_turn_on()
+                elif (time is not None and self._hvac_mode == HVAC_MODE_COOL):
+                    # The time argument is passed only in keep-alive case
+                    _LOGGER.info(
+                        "Keep-alive - Turning on AC switch switch %s",
+                        self.heater_entity_id,
+                    )
+                    await self._async_heater_turn_on()
             else:
-                if (self.ac_mode and too_hot) or (not self.ac_mode and too_cold):
+                if (self._hvac_mode == HVAC_MODE_HEAT and too_cold):
                     _LOGGER.info("Turning on heater %s", self.heater_entity_id)
                     await self._async_heater_turn_on()
+                elif (self._hvac_mode == HVAC_MODE_COOL and too_hot):
+                    _LOGGER.info("Turning on AC switch %s", self.heater_entity_id)
+                    await self._async_ac_switch_turn_on()
                 elif time is not None:
                     # The time argument is passed only in keep-alive case
                     _LOGGER.info(
@@ -508,7 +523,7 @@ class GenericThermostat(ClimateEntity, RestoreEntity):
     @property
     def _is_device_active(self):
         """If the toggleable device is currently active."""
-        if not self.hass.states.get(self.heater_entity_id):
+        if not (self.hass.states.get(self.heater_entity_id) or self.hass.states.get(self.ac_switch_entity_id)):
             return None
 
         return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
